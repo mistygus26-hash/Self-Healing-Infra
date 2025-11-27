@@ -17,7 +17,7 @@
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "// Normaliser le payload Uptime Kuma\nconst input = $input.first().json;\n\n// Générer un ID d'incident unique\nconst incidentId = 'INC-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);\n\n// Extraire les informations de l'alerte\nconst payload = {\n  incident_id: incidentId,\n  timestamp: new Date().toISOString(),\n  monitor_name: input.monitor?.name || input.monitorName || 'Unknown',\n  service_name: (input.monitor?.name || input.monitorName || 'unknown').toLowerCase().replace(/[^a-z0-9]/g, '-'),\n  monitor_url: input.monitor?.url || input.url || '',\n  status: input.heartbeat?.status === 0 ? 'DOWN' : (input.heartbeat?.status === 1 ? 'UP' : 'UNKNOWN'),\n  message: input.msg || input.heartbeat?.msg || '',\n  attempt_count: 0,\n  level_1_diagnosis: null,\n  level_1_action: null,\n  level_1_success: null,\n  level_2_recommendation: null\n};\n\nreturn [{ json: payload }];"
+        "jsCode": "const input = $input.first().json;\nconst incidentId = 'INC-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);\nconst payload = {\n  incident_id: incidentId,\n  timestamp: new Date().toISOString(),\n  monitor_name: input.monitor?.name || input.monitorName || 'Unknown',\n  service_name: (input.monitor?.name || input.monitorName || 'unknown').toLowerCase().replace(/[^a-z0-9]/g, '-'),\n  monitor_url: input.monitor?.url || input.url || '',\n  status: input.heartbeat?.status === 0 ? 'DOWN' : (input.heartbeat?.status === 1 ? 'UP' : 'UNKNOWN'),\n  message: input.msg || input.heartbeat?.msg || '',\n  attempt_count: 0,\n  level_1_diagnosis: null,\n  level_1_action: null,\n  level_1_success: null,\n  level_2_recommendation: null\n};\nreturn [{ json: payload }];"
       },
       "id": "normalize-payload",
       "name": "Normaliser Payload",
@@ -28,22 +28,8 @@
     {
       "parameters": {
         "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict"
-          },
-          "conditions": [
-            {
-              "id": "condition-down",
-              "leftValue": "={{ $json.status }}",
-              "rightValue": "DOWN",
-              "operator": {
-                "type": "string",
-                "operation": "equals"
-              }
-            }
-          ],
+          "options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict"},
+          "conditions": [{"id": "condition-down", "leftValue": "={{ $json.status }}", "rightValue": "DOWN", "operator": {"type": "string", "operation": "equals"}}],
           "combinator": "and"
         },
         "options": {}
@@ -64,15 +50,15 @@
       "typeVersion": 1,
       "position": [660, -100],
       "credentials": {
-        "sshPassword": {
-          "id": "VPS_SSH_CREDENTIAL_ID",
-          "name": "VPS SSH"
+        "sshPrivateKey": {
+          "id": "YOUR_SSH_CREDENTIAL_ID",
+          "name": "Auto-Repare VPS SSH Key"
         }
       }
     },
     {
       "parameters": {
-        "command": "=docker logs --tail 50 {{ $('Normaliser Payload').item.json.service_name }} 2>&1 || echo 'No Docker container with this name'"
+        "command": "=docker logs --tail 50 {{ $('Normaliser Payload').item.json.service_name }} 2>&1 || echo 'No Docker container'"
       },
       "id": "ssh-docker-logs",
       "name": "SSH - Docker Logs",
@@ -80,19 +66,19 @@
       "typeVersion": 1,
       "position": [660, 100],
       "credentials": {
-        "sshPassword": {
-          "id": "VPS_SSH_CREDENTIAL_ID",
-          "name": "VPS SSH"
+        "sshPrivateKey": {
+          "id": "YOUR_SSH_CREDENTIAL_ID",
+          "name": "Auto-Repare VPS SSH Key"
         }
       }
     },
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "// Agréger les logs\nconst incident = $('Normaliser Payload').first().json;\nconst sysLogs = $('SSH - Collecter Logs').first().json.stdout || '';\nconst dockerLogs = $('SSH - Docker Logs').first().json.stdout || '';\n\nincident.error_logs = `=== SYSTEM LOGS ===\\n${sysLogs.slice(-2000)}\\n\\n=== DOCKER LOGS ===\\n${dockerLogs.slice(-2000)}`;\nincident.attempt_count = 1;\n\nreturn [{ json: incident }];"
+        "jsCode": "const incident = $('Normaliser Payload').first().json;\nconst sysLogs = $('SSH - Collecter Logs').first().json.stdout || '';\nconst dockerLogs = $('SSH - Docker Logs').first().json.stdout || '';\nincident.error_logs = '=== SYSTEM LOGS ===\\n' + sysLogs.slice(-2000) + '\\n\\n=== DOCKER LOGS ===\\n' + dockerLogs.slice(-2000);\nincident.attempt_count = 1;\nreturn [{ json: incident }];"
       },
       "id": "aggregate-logs",
-      "name": "Agréger Logs",
+      "name": "Agreger Logs",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [880, 0]
@@ -103,10 +89,8 @@
         "url": "http://localhost:11434/api/generate",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"model\": \"qwen2.5-coder:3b-instruct\",\n  \"prompt\": \"Tu es un analyste système Niveau 1. Analyse ces logs et retourne UNIQUEMENT un JSON valide.\\n\\nService: {{ $json.service_name }}\\nStatus: {{ $json.status }}\\nMessage: {{ $json.message }}\\n\\nLogs:\\n{{ $json.error_logs.substring(0, 3000) }}\\n\\nRéponds UNIQUEMENT avec ce format JSON:\\n{\\\"cause\\\": \\\"description courte\\\", \\\"confidence\\\": 0.85, \\\"action_command\\\": \\\"commande ou ESCALATE\\\", \\\"action_type\\\": \\\"restart|reload|clean|ESCALATE\\\", \\\"is_safe\\\": true, \\\"explanation\\\": \\\"explication\\\"}\",\n  \"stream\": false,\n  \"options\": {\n    \"temperature\": 0.1,\n    \"num_predict\": 500\n  }\n}",
-        "options": {
-          "timeout": 60000
-        }
+        "jsonBody": "={\n  \"model\": \"qwen2.5-coder:3b-instruct\",\n  \"prompt\": \"Tu es un analyste systeme Niveau 1. Analyse ces logs et retourne UNIQUEMENT un JSON valide.\\n\\nService: {{ $json.service_name }}\\nStatus: {{ $json.status }}\\n\\nLogs:\\n{{ $json.error_logs.substring(0, 3000) }}\\n\\nReponds UNIQUEMENT avec ce format JSON:\\n{\\\"cause\\\": \\\"description courte\\\", \\\"confidence\\\": 0.85, \\\"action_command\\\": \\\"commande ou ESCALATE\\\", \\\"action_type\\\": \\\"restart|reload|clean|ESCALATE\\\", \\\"is_safe\\\": true, \\\"explanation\\\": \\\"explication\\\"}\",\n  \"stream\": false,\n  \"options\": { \"temperature\": 0.1, \"num_predict\": 500 }\n}",
+        "options": {"timeout": 60000}
       },
       "id": "ollama-qwen",
       "name": "Ollama - Qwen N1",
@@ -117,10 +101,10 @@
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "// Parser la réponse Qwen\nconst incident = $('Agréger Logs').first().json;\nconst qwenResponse = $input.first().json;\n\ntry {\n  // Extraire le JSON de la réponse\n  let responseText = qwenResponse.response || '';\n  \n  // Chercher le JSON dans la réponse\n  const jsonMatch = responseText.match(/\\{[\\s\\S]*?\\\"cause\\\"[\\s\\S]*?\\}/m);\n  if (jsonMatch) {\n    const diagnosis = JSON.parse(jsonMatch[0]);\n    incident.level_1_diagnosis = diagnosis;\n    incident.level_1_action = diagnosis.action_command;\n  } else {\n    throw new Error('No valid JSON found in response');\n  }\n} catch (e) {\n  // Fallback en cas d'erreur de parsing\n  incident.level_1_diagnosis = {\n    cause: 'Unable to parse Qwen response',\n    confidence: 0,\n    action_command: 'ESCALATE',\n    action_type: 'ESCALATE',\n    is_safe: false,\n    explanation: 'Parsing error: ' + e.message\n  };\n  incident.level_1_action = 'ESCALATE';\n}\n\nreturn [{ json: incident }];"
+        "jsCode": "const incident = $('Agreger Logs').first().json;\nconst qwenResponse = $input.first().json;\ntry {\n  let responseText = qwenResponse.response || '';\n  const jsonMatch = responseText.match(/\\{[\\s\\S]*?\\\"cause\\\"[\\s\\S]*?\\}/m);\n  if (jsonMatch) {\n    const diagnosis = JSON.parse(jsonMatch[0]);\n    incident.level_1_diagnosis = diagnosis;\n    incident.level_1_action = diagnosis.action_command;\n  } else { throw new Error('No valid JSON'); }\n} catch (e) {\n  incident.level_1_diagnosis = { cause: 'Parse error', confidence: 0, action_command: 'ESCALATE', action_type: 'ESCALATE', is_safe: false, explanation: e.message };\n  incident.level_1_action = 'ESCALATE';\n}\nreturn [{ json: incident }];"
       },
       "id": "parse-qwen",
-      "name": "Parser Réponse Qwen",
+      "name": "Parser Reponse Qwen",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [1320, 0]
@@ -128,39 +112,11 @@
     {
       "parameters": {
         "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict"
-          },
+          "options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict"},
           "conditions": [
-            {
-              "id": "cond-escalate",
-              "leftValue": "={{ $json.level_1_action }}",
-              "rightValue": "ESCALATE",
-              "operator": {
-                "type": "string",
-                "operation": "notEquals"
-              }
-            },
-            {
-              "id": "cond-safe",
-              "leftValue": "={{ $json.level_1_diagnosis.is_safe }}",
-              "rightValue": true,
-              "operator": {
-                "type": "boolean",
-                "operation": "equals"
-              }
-            },
-            {
-              "id": "cond-confidence",
-              "leftValue": "={{ $json.level_1_diagnosis.confidence }}",
-              "rightValue": 0.6,
-              "operator": {
-                "type": "number",
-                "operation": "gte"
-              }
-            }
+            {"id": "cond-escalate", "leftValue": "={{ $json.level_1_action }}", "rightValue": "ESCALATE", "operator": {"type": "string", "operation": "notEquals"}},
+            {"id": "cond-safe", "leftValue": "={{ $json.level_1_diagnosis.is_safe }}", "rightValue": true, "operator": {"type": "boolean", "operation": "equals"}},
+            {"id": "cond-confidence", "leftValue": "={{ $json.level_1_diagnosis.confidence }}", "rightValue": 0.6, "operator": {"type": "number", "operation": "gte"}}
           ],
           "combinator": "and"
         },
@@ -174,7 +130,7 @@
     },
     {
       "parameters": {
-        "url": "={{ $env.N8N_WEBHOOK_URL }}auto-repare/execute-action",
+        "url": "={{ $env.N8N_WEBHOOK_BASE_URL }}/auto-repare/execute-action",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify($json) }}",
@@ -188,7 +144,7 @@
     },
     {
       "parameters": {
-        "url": "={{ $env.N8N_WEBHOOK_URL }}auto-repare/escalate-n2",
+        "url": "={{ $env.N8N_WEBHOOK_BASE_URL }}/auto-repare/escalate-n2",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify($json) }}",
@@ -210,69 +166,15 @@
     }
   ],
   "connections": {
-    "Webhook Uptime Kuma": {
-      "main": [
-        [{ "node": "Normaliser Payload", "type": "main", "index": 0 }]
-      ]
-    },
-    "Normaliser Payload": {
-      "main": [
-        [{ "node": "Service Down?", "type": "main", "index": 0 }]
-      ]
-    },
-    "Service Down?": {
-      "main": [
-        [
-          { "node": "SSH - Collecter Logs", "type": "main", "index": 0 },
-          { "node": "SSH - Docker Logs", "type": "main", "index": 0 }
-        ],
-        [{ "node": "Fin - Service UP", "type": "main", "index": 0 }]
-      ]
-    },
-    "SSH - Collecter Logs": {
-      "main": [
-        [{ "node": "Agréger Logs", "type": "main", "index": 0 }]
-      ]
-    },
-    "SSH - Docker Logs": {
-      "main": [
-        [{ "node": "Agréger Logs", "type": "main", "index": 0 }]
-      ]
-    },
-    "Agréger Logs": {
-      "main": [
-        [{ "node": "Ollama - Qwen N1", "type": "main", "index": 0 }]
-      ]
-    },
-    "Ollama - Qwen N1": {
-      "main": [
-        [{ "node": "Parser Réponse Qwen", "type": "main", "index": 0 }]
-      ]
-    },
-    "Parser Réponse Qwen": {
-      "main": [
-        [{ "node": "Action Safe?", "type": "main", "index": 0 }]
-      ]
-    },
-    "Action Safe?": {
-      "main": [
-        [{ "node": "Appeler Action Executor", "type": "main", "index": 0 }],
-        [{ "node": "Escalader vers N2", "type": "main", "index": 0 }]
-      ]
-    }
+    "Webhook Uptime Kuma": {"main": [[{"node": "Normaliser Payload", "type": "main", "index": 0}]]},
+    "Normaliser Payload": {"main": [[{"node": "Service Down?", "type": "main", "index": 0}]]},
+    "Service Down?": {"main": [[{"node": "SSH - Collecter Logs", "type": "main", "index": 0}, {"node": "SSH - Docker Logs", "type": "main", "index": 0}], [{"node": "Fin - Service UP", "type": "main", "index": 0}]]},
+    "SSH - Collecter Logs": {"main": [[{"node": "Agreger Logs", "type": "main", "index": 0}]]},
+    "SSH - Docker Logs": {"main": [[{"node": "Agreger Logs", "type": "main", "index": 0}]]},
+    "Agreger Logs": {"main": [[{"node": "Ollama - Qwen N1", "type": "main", "index": 0}]]},
+    "Ollama - Qwen N1": {"main": [[{"node": "Parser Reponse Qwen", "type": "main", "index": 0}]]},
+    "Parser Reponse Qwen": {"main": [[{"node": "Action Safe?", "type": "main", "index": 0}]]},
+    "Action Safe?": {"main": [[{"node": "Appeler Action Executor", "type": "main", "index": 0}], [{"node": "Escalader vers N2", "type": "main", "index": 0}]]}
   },
-  "settings": {
-    "executionOrder": "v1",
-    "saveManualExecutions": true,
-    "saveDataErrorExecution": "all",
-    "saveDataSuccessExecution": "all"
-  },
-  "staticData": null,
-  "tags": [
-    { "name": "auto-repare" },
-    { "name": "monitoring" },
-    { "name": "self-healing" }
-  ],
-  "triggerCount": 1,
-  "versionId": "1.0.0"
+  "settings": {"executionOrder": "v1"}
 }

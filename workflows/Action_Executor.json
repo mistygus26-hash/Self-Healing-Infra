@@ -17,7 +17,7 @@
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "// Valider la commande contre la liste blanche\nconst incident = $input.first().json;\nconst command = incident.level_1_action;\n\n// Liste des patterns de commandes autorisées\nconst safePatterns = [\n  /^systemctl (restart|start|stop|reload|status) [a-z0-9-]+$/,\n  /^docker (restart|start|stop) [a-z0-9_-]+$/,\n  /^docker logs --tail \\d+ [a-z0-9_-]+$/,\n  /^journalctl --vacuum-(size|time)=\\S+$/,\n  /^docker system prune -f$/,\n  /^apt-get (clean|autoremove -y)$/\n];\n\n// Patterns bloqués\nconst blockedPatterns = [\n  /rm\\s+-rf/i,\n  /rm\\s+-r\\s+\\//i,\n  /dd\\s+if=/i,\n  /mkfs/i,\n  /fdisk/i,\n  />\\/dev\\//i,\n  /chmod\\s+777/i,\n  /DROP\\s+(DATABASE|TABLE)/i,\n  /TRUNCATE/i,\n  /eval/i,\n  /\\|\\s*(ba)?sh/i\n];\n\n// Vérification commande bloquée\nconst isBlocked = blockedPatterns.some(pattern => pattern.test(command));\nif (isBlocked) {\n  incident.validation = {\n    is_valid: false,\n    reason: 'Command matches blocked pattern',\n    command: command\n  };\n  return [{ json: incident }];\n}\n\n// Vérification commande autorisée\nconst isSafe = safePatterns.some(pattern => pattern.test(command));\nincident.validation = {\n  is_valid: isSafe,\n  reason: isSafe ? 'Command matches safe pattern' : 'Command not in whitelist',\n  command: command\n};\n\nreturn [{ json: incident }];"
+        "jsCode": "const incident = $input.first().json;\nconst command = incident.level_1_action;\nconst safePatterns = [\n  /^systemctl (restart|start|stop|reload|status) [a-z0-9-]+$/,\n  /^docker (restart|start|stop) [a-z0-9_-]+$/,\n  /^docker logs --tail \\d+ [a-z0-9_-]+$/,\n  /^journalctl --vacuum-(size|time)=\\S+$/,\n  /^docker system prune -f$/\n];\nconst blockedPatterns = [\n  /rm\\s+-rf/i,\n  /rm\\s+-r\\s+\\//i,\n  /dd\\s+if=/i,\n  /mkfs/i,\n  /chmod\\s+777/i,\n  /DROP\\s+(DATABASE|TABLE)/i\n];\nconst isBlocked = blockedPatterns.some(p => p.test(command));\nif (isBlocked) {\n  incident.validation = { is_valid: false, reason: 'Blocked pattern', command };\n  return [{ json: incident }];\n}\nconst isSafe = safePatterns.some(p => p.test(command));\nincident.validation = { is_valid: isSafe, reason: isSafe ? 'Safe pattern' : 'Not in whitelist', command };\nreturn [{ json: incident }];"
       },
       "id": "validate-command",
       "name": "Valider Commande",
@@ -28,22 +28,8 @@
     {
       "parameters": {
         "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict"
-          },
-          "conditions": [
-            {
-              "id": "cond-valid",
-              "leftValue": "={{ $json.validation.is_valid }}",
-              "rightValue": true,
-              "operator": {
-                "type": "boolean",
-                "operation": "equals"
-              }
-            }
-          ],
+          "options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict"},
+          "conditions": [{"id": "cond-valid", "leftValue": "={{ $json.validation.is_valid }}", "rightValue": true, "operator": {"type": "boolean", "operation": "equals"}}],
           "combinator": "and"
         },
         "options": {}
@@ -59,14 +45,14 @@
         "command": "={{ $json.level_1_action }}"
       },
       "id": "ssh-execute",
-      "name": "SSH - Exécuter Action",
+      "name": "SSH - Executer Action",
       "type": "n8n-nodes-base.ssh",
       "typeVersion": 1,
       "position": [660, -100],
       "credentials": {
-        "sshPassword": {
-          "id": "VPS_SSH_CREDENTIAL_ID",
-          "name": "VPS SSH"
+        "sshPrivateKey": {
+          "id": "YOUR_SSH_CREDENTIAL_ID",
+          "name": "Auto-Repare VPS SSH Key"
         }
       }
     },
@@ -86,24 +72,24 @@
         "command": "=curl -s -o /dev/null -w '%{http_code}' {{ $('Webhook Execute Action').item.json.monitor_url || 'http://localhost' }} 2>/dev/null || echo 'FAIL'"
       },
       "id": "ssh-verify",
-      "name": "SSH - Vérifier Service",
+      "name": "SSH - Verifier Service",
       "type": "n8n-nodes-base.ssh",
       "typeVersion": 1,
       "position": [1100, -100],
       "credentials": {
-        "sshPassword": {
-          "id": "VPS_SSH_CREDENTIAL_ID",
-          "name": "VPS SSH"
+        "sshPrivateKey": {
+          "id": "YOUR_SSH_CREDENTIAL_ID",
+          "name": "Auto-Repare VPS SSH Key"
         }
       }
     },
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "// Évaluer le résultat de l'action\nconst incident = $('Webhook Execute Action').first().json;\nconst executeResult = $('SSH - Exécuter Action').first().json;\nconst verifyResult = $('SSH - Vérifier Service').first().json;\n\nconst httpCode = verifyResult.stdout?.trim();\nconst success = httpCode && httpCode.startsWith('2');\n\nincident.level_1_success = success;\nincident.execution_result = {\n  stdout: executeResult.stdout,\n  stderr: executeResult.stderr,\n  exit_code: executeResult.exitCode,\n  verification_http_code: httpCode,\n  verified_at: new Date().toISOString()\n};\n\nreturn [{ json: incident }];"
+        "jsCode": "const incident = $('Webhook Execute Action').first().json;\nconst executeResult = $('SSH - Executer Action').first().json;\nconst verifyResult = $('SSH - Verifier Service').first().json;\nconst httpCode = verifyResult.stdout?.trim();\nconst success = httpCode && httpCode.startsWith('2');\nincident.level_1_success = success;\nincident.execution_result = { stdout: executeResult.stdout, stderr: executeResult.stderr, exit_code: executeResult.exitCode, verification_http_code: httpCode, verified_at: new Date().toISOString() };\nreturn [{ json: incident }];"
       },
       "id": "evaluate-result",
-      "name": "Évaluer Résultat",
+      "name": "Evaluer Resultat",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [1320, -100]
@@ -111,66 +97,52 @@
     {
       "parameters": {
         "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict"
-          },
-          "conditions": [
-            {
-              "id": "cond-success",
-              "leftValue": "={{ $json.level_1_success }}",
-              "rightValue": true,
-              "operator": {
-                "type": "boolean",
-                "operation": "equals"
-              }
-            }
-          ],
+          "options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict"},
+          "conditions": [{"id": "cond-success", "leftValue": "={{ $json.level_1_success }}", "rightValue": true, "operator": {"type": "boolean", "operation": "equals"}}],
           "combinator": "and"
         },
         "options": {}
       },
       "id": "check-success",
-      "name": "Action Réussie?",
+      "name": "Action Reussie?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [1540, -100]
     },
     {
       "parameters": {
-        "url": "={{ $env.N8N_WEBHOOK_URL }}auto-repare/notify",
+        "url": "={{ $env.N8N_WEBHOOK_BASE_URL }}/auto-repare/notify",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"type\": \"success\",\n  \"incident\": {{ JSON.stringify($json) }}\n}",
+        "jsonBody": "={ \"type\": \"success\", \"incident\": {{ JSON.stringify($json) }} }",
         "options": {}
       },
       "id": "notify-success",
-      "name": "Notifier Succès",
+      "name": "Notifier Succes",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [1760, -200]
     },
     {
       "parameters": {
-        "url": "={{ $env.N8N_WEBHOOK_URL }}auto-repare/escalate-n2",
+        "url": "={{ $env.N8N_WEBHOOK_BASE_URL }}/auto-repare/escalate-n2",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify($json) }}",
         "options": {}
       },
       "id": "escalate-failure",
-      "name": "Escalader - Échec N1",
+      "name": "Escalader - Echec N1",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [1760, 0]
     },
     {
       "parameters": {
-        "url": "={{ $env.N8N_WEBHOOK_URL }}auto-repare/escalate-n2",
+        "url": "={{ $env.N8N_WEBHOOK_BASE_URL }}/auto-repare/escalate-n2",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"incident_id\": \"{{ $json.incident_id }}\",\n  \"reason\": \"Command validation failed: {{ $json.validation.reason }}\",\n  \"original_incident\": {{ JSON.stringify($json) }}\n}",
+        "jsonBody": "={ \"incident_id\": \"{{ $json.incident_id }}\", \"reason\": \"Command validation failed\", \"original_incident\": {{ JSON.stringify($json) }} }",
         "options": {}
       },
       "id": "escalate-invalid",
@@ -202,9 +174,9 @@
       "typeVersion": 1,
       "position": [220, 400],
       "credentials": {
-        "sshPassword": {
-          "id": "VPS_SSH_CREDENTIAL_ID",
-          "name": "VPS SSH"
+        "sshPrivateKey": {
+          "id": "YOUR_SSH_CREDENTIAL_ID",
+          "name": "Auto-Repare VPS SSH Key"
         }
       }
     },
@@ -217,16 +189,14 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "anthropic-version", "value": "2023-06-01" },
-            { "name": "content-type", "value": "application/json" }
+            {"name": "anthropic-version", "value": "2023-06-01"},
+            {"name": "content-type", "value": "application/json"}
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"model\": \"claude-3-5-sonnet-20241022\",\n  \"max_tokens\": 2000,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Tu es un expert DevOps Niveau 2. Analyse cet incident et fournis une recommandation.\\n\\nIncident ID: {{ $('Webhook Escalade N2').item.json.incident_id }}\\nService: {{ $('Webhook Escalade N2').item.json.service_name }}\\nStatus: {{ $('Webhook Escalade N2').item.json.status }}\\n\\nDiagnostic N1: {{ JSON.stringify($('Webhook Escalade N2').item.json.level_1_diagnosis) }}\\nAction N1: {{ $('Webhook Escalade N2').item.json.level_1_action }}\\nRésultat N1: {{ $('Webhook Escalade N2').item.json.level_1_success }}\\n\\nContexte Système:\\n{{ $json.stdout }}\\n\\nRéponds UNIQUEMENT avec un JSON valide dans ce format:\\n{\\\"root_cause\\\": \\\"...\\\", \\\"analysis\\\": \\\"...\\\", \\\"severity\\\": \\\"critical|high|medium|low\\\", \\\"action_command\\\": \\\"...\\\", \\\"action_explanation\\\": \\\"...\\\", \\\"rollback_command\\\": \\\"...\\\", \\\"requires_human_approval\\\": true, \\\"risks\\\": [\\\"...\\\"], \\\"post_action_verification\\\": \\\"...\\\", \\\"prevention_recommendation\\\": \\\"...\\\"}\"\n    }\n  ]\n}",
-        "options": {
-          "timeout": 120000
-        }
+        "jsonBody": "={\n  \"model\": \"claude-3-5-sonnet-20241022\",\n  \"max_tokens\": 2000,\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"Tu es un expert DevOps Niveau 2. Analyse cet incident.\\n\\nIncident: {{ $('Webhook Escalade N2').item.json.incident_id }}\\nService: {{ $('Webhook Escalade N2').item.json.service_name }}\\n\\nContexte:\\n{{ $json.stdout }}\\n\\nReponds avec JSON: {\\\"root_cause\\\": \\\"...\\\", \\\"analysis\\\": \\\"...\\\", \\\"severity\\\": \\\"critical|high|medium|low\\\", \\\"action_command\\\": \\\"...\\\", \\\"action_explanation\\\": \\\"...\\\", \\\"requires_human_approval\\\": true, \\\"risks\\\": [\\\"...\\\"]}\"\n  }]\n}",
+        "options": {"timeout": 120000}
       },
       "id": "claude-n2",
       "name": "Claude - Expert N2",
@@ -235,7 +205,7 @@
       "position": [440, 400],
       "credentials": {
         "httpHeaderAuth": {
-          "id": "ANTHROPIC_API_CREDENTIAL_ID",
+          "id": "YOUR_ANTHROPIC_CREDENTIAL_ID",
           "name": "Anthropic API"
         }
       }
@@ -243,20 +213,20 @@
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "// Parser la réponse Claude\nconst incident = $('Webhook Escalade N2').first().json;\nconst claudeResponse = $input.first().json;\n\ntry {\n  const content = claudeResponse.content?.[0]?.text || '';\n  const jsonMatch = content.match(/\\{[\\s\\S]*?\\\"root_cause\\\"[\\s\\S]*?\\}/m);\n  \n  if (jsonMatch) {\n    incident.level_2_recommendation = JSON.parse(jsonMatch[0]);\n  } else {\n    throw new Error('No valid JSON found');\n  }\n} catch (e) {\n  incident.level_2_recommendation = {\n    root_cause: 'Unable to parse Claude response',\n    analysis: 'Manual investigation required',\n    severity: 'high',\n    action_command: 'Manual review required',\n    requires_human_approval: true,\n    risks: ['Automatic analysis failed'],\n    error: e.message\n  };\n}\n\nreturn [{ json: incident }];"
+        "jsCode": "const incident = $('Webhook Escalade N2').first().json;\nconst claudeResponse = $input.first().json;\ntry {\n  const content = claudeResponse.content?.[0]?.text || '';\n  const jsonMatch = content.match(/\\{[\\s\\S]*?\\\"root_cause\\\"[\\s\\S]*?\\}/m);\n  if (jsonMatch) {\n    incident.level_2_recommendation = JSON.parse(jsonMatch[0]);\n  } else { throw new Error('No JSON'); }\n} catch (e) {\n  incident.level_2_recommendation = { root_cause: 'Parse error', analysis: 'Manual review', severity: 'high', requires_human_approval: true, error: e.message };\n}\nreturn [{ json: incident }];"
       },
       "id": "parse-claude",
-      "name": "Parser Réponse Claude",
+      "name": "Parser Reponse Claude",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [660, 400]
     },
     {
       "parameters": {
-        "url": "={{ $env.N8N_WEBHOOK_URL }}auto-repare/notify",
+        "url": "={{ $env.N8N_WEBHOOK_BASE_URL }}/auto-repare/notify",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"type\": \"escalation\",\n  \"incident\": {{ JSON.stringify($json) }}\n}",
+        "jsonBody": "={ \"type\": \"escalation\", \"incident\": {{ JSON.stringify($json) }} }",
         "options": {}
       },
       "id": "notify-escalation",
@@ -267,80 +237,18 @@
     }
   ],
   "connections": {
-    "Webhook Execute Action": {
-      "main": [
-        [{ "node": "Valider Commande", "type": "main", "index": 0 }]
-      ]
-    },
-    "Valider Commande": {
-      "main": [
-        [{ "node": "Commande Valide?", "type": "main", "index": 0 }]
-      ]
-    },
-    "Commande Valide?": {
-      "main": [
-        [{ "node": "SSH - Exécuter Action", "type": "main", "index": 0 }],
-        [{ "node": "Escalader - Commande Invalide", "type": "main", "index": 0 }]
-      ]
-    },
-    "SSH - Exécuter Action": {
-      "main": [
-        [{ "node": "Attendre 30s", "type": "main", "index": 0 }]
-      ]
-    },
-    "Attendre 30s": {
-      "main": [
-        [{ "node": "SSH - Vérifier Service", "type": "main", "index": 0 }]
-      ]
-    },
-    "SSH - Vérifier Service": {
-      "main": [
-        [{ "node": "Évaluer Résultat", "type": "main", "index": 0 }]
-      ]
-    },
-    "Évaluer Résultat": {
-      "main": [
-        [{ "node": "Action Réussie?", "type": "main", "index": 0 }]
-      ]
-    },
-    "Action Réussie?": {
-      "main": [
-        [{ "node": "Notifier Succès", "type": "main", "index": 0 }],
-        [{ "node": "Escalader - Échec N1", "type": "main", "index": 0 }]
-      ]
-    },
-    "Webhook Escalade N2": {
-      "main": [
-        [{ "node": "SSH - Collecter Contexte", "type": "main", "index": 0 }]
-      ]
-    },
-    "SSH - Collecter Contexte": {
-      "main": [
-        [{ "node": "Claude - Expert N2", "type": "main", "index": 0 }]
-      ]
-    },
-    "Claude - Expert N2": {
-      "main": [
-        [{ "node": "Parser Réponse Claude", "type": "main", "index": 0 }]
-      ]
-    },
-    "Parser Réponse Claude": {
-      "main": [
-        [{ "node": "Demander Validation Humaine", "type": "main", "index": 0 }]
-      ]
-    }
+    "Webhook Execute Action": {"main": [[{"node": "Valider Commande", "type": "main", "index": 0}]]},
+    "Valider Commande": {"main": [[{"node": "Commande Valide?", "type": "main", "index": 0}]]},
+    "Commande Valide?": {"main": [[{"node": "SSH - Executer Action", "type": "main", "index": 0}], [{"node": "Escalader - Commande Invalide", "type": "main", "index": 0}]]},
+    "SSH - Executer Action": {"main": [[{"node": "Attendre 30s", "type": "main", "index": 0}]]},
+    "Attendre 30s": {"main": [[{"node": "SSH - Verifier Service", "type": "main", "index": 0}]]},
+    "SSH - Verifier Service": {"main": [[{"node": "Evaluer Resultat", "type": "main", "index": 0}]]},
+    "Evaluer Resultat": {"main": [[{"node": "Action Reussie?", "type": "main", "index": 0}]]},
+    "Action Reussie?": {"main": [[{"node": "Notifier Succes", "type": "main", "index": 0}], [{"node": "Escalader - Echec N1", "type": "main", "index": 0}]]},
+    "Webhook Escalade N2": {"main": [[{"node": "SSH - Collecter Contexte", "type": "main", "index": 0}]]},
+    "SSH - Collecter Contexte": {"main": [[{"node": "Claude - Expert N2", "type": "main", "index": 0}]]},
+    "Claude - Expert N2": {"main": [[{"node": "Parser Reponse Claude", "type": "main", "index": 0}]]},
+    "Parser Reponse Claude": {"main": [[{"node": "Demander Validation Humaine", "type": "main", "index": 0}]]}
   },
-  "settings": {
-    "executionOrder": "v1",
-    "saveManualExecutions": true,
-    "saveDataErrorExecution": "all",
-    "saveDataSuccessExecution": "all"
-  },
-  "staticData": null,
-  "tags": [
-    { "name": "auto-repare" },
-    { "name": "executor" }
-  ],
-  "triggerCount": 2,
-  "versionId": "1.0.0"
+  "settings": {"executionOrder": "v1"}
 }
