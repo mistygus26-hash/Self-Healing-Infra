@@ -11,8 +11,79 @@
       "name": "Webhook Execute Action",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [0, 0],
+      "position": [
+        0,
+        0
+      ],
       "webhookId": "auto-repare-execute"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const incident = $input.first().json;\nconst searchText = (incident.service_name || '') + ' ' + (incident.error_type || '') + ' ' + (incident.monitor_name || '');\nincident._search_text = searchText.trim();\nreturn [{ json: incident }];"
+      },
+      "id": "prepare-rag",
+      "name": "Preparer Query RAG",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://137.74.44.64:11434/api/embeddings",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"nomic-embed-text\",\n  \"prompt\": \"{{ $json._search_text }}\"\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "ollama-embed",
+      "name": "Ollama - Embedding",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://137.74.44.64:6333/collections/incidents_history/points/search",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"vector\": {{ JSON.stringify($json.embedding) }},\n  \"limit\": 3,\n  \"with_payload\": true,\n  \"score_threshold\": 0.7\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "qdrant-search",
+      "name": "Qdrant - Chercher Similaires",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const incident = $('Webhook Execute Action').first().json;\nconst ragResults = $input.first().json;\nincident.rag_history = [];\nif (ragResults.result && ragResults.result.length > 0) {\n  incident.rag_history = ragResults.result.map(r => ({\n    score: r.score,\n    service: r.payload?.service_name,\n    solution: r.payload?.solution_applied,\n    success: r.payload?.resolution_success\n  }));\n  incident.has_similar_incidents = true;\n  const successfulFix = ragResults.result.find(r => r.payload?.resolution_success === true);\n  if (successfulFix) {\n    incident.suggested_from_history = successfulFix.payload?.solution_applied;\n  }\n} else {\n  incident.has_similar_incidents = false;\n}\nreturn [{ json: incident }];"
+      },
+      "id": "enrich-rag",
+      "name": "Enrichir avec RAG",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ]
     },
     {
       "parameters": {
@@ -23,13 +94,30 @@
       "name": "Valider Commande",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [220, 0]
+      "position": [
+        1100,
+        0
+      ]
     },
     {
       "parameters": {
         "conditions": {
-          "options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict"},
-          "conditions": [{"id": "cond-valid", "leftValue": "={{ $json.validation.is_valid }}", "rightValue": true, "operator": {"type": "boolean", "operation": "equals"}}],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-valid",
+              "leftValue": "={{ $json.validation.is_valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
           "combinator": "and"
         },
         "options": {}
@@ -38,7 +126,10 @@
       "name": "Commande Valide?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [440, 0]
+      "position": [
+        1320,
+        0
+      ]
     },
     {
       "parameters": {
@@ -48,7 +139,10 @@
       "name": "SSH - Executer Action",
       "type": "n8n-nodes-base.ssh",
       "typeVersion": 1,
-      "position": [660, -100],
+      "position": [
+        1540,
+        -100
+      ],
       "credentials": {
         "sshPrivateKey": {
           "id": "YOUR_SSH_CREDENTIAL_ID",
@@ -65,7 +159,10 @@
       "name": "Attendre 30s",
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1.1,
-      "position": [880, -100]
+      "position": [
+        1760,
+        -100
+      ]
     },
     {
       "parameters": {
@@ -75,7 +172,10 @@
       "name": "SSH - Verifier Service",
       "type": "n8n-nodes-base.ssh",
       "typeVersion": 1,
-      "position": [1100, -100],
+      "position": [
+        1980,
+        -100
+      ],
       "credentials": {
         "sshPrivateKey": {
           "id": "YOUR_SSH_CREDENTIAL_ID",
@@ -86,19 +186,36 @@
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const incident = $('Webhook Execute Action').first().json;\nconst executeResult = $('SSH - Executer Action').first().json;\nconst verifyResult = $('SSH - Verifier Service').first().json;\nconst httpCode = verifyResult.stdout?.trim();\nconst success = httpCode && httpCode.startsWith('2');\nincident.level_1_success = success;\nincident.execution_result = { stdout: executeResult.stdout, stderr: executeResult.stderr, exit_code: executeResult.exitCode, verification_http_code: httpCode, verified_at: new Date().toISOString() };\nreturn [{ json: incident }];"
+        "jsCode": "const incident = $('Webhook Execute Action').first().json;\nconst executeResult = $('SSH - Executer Action').first().json;\nconst verifyResult = $('SSH - Verifier Service').first().json;\nconst httpCode = verifyResult.stdout?.trim();\nconst success = httpCode && httpCode.startsWith('2');\nincident.level_1_success = success;\nincident.resolved_at = success ? new Date().toISOString() : null;\nincident.execution_result = { stdout: executeResult.stdout, stderr: executeResult.stderr, exit_code: executeResult.exitCode, http_code: httpCode };\nreturn [{ json: incident }];"
       },
       "id": "evaluate-result",
       "name": "Evaluer Resultat",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1320, -100]
+      "position": [
+        2200,
+        -100
+      ]
     },
     {
       "parameters": {
         "conditions": {
-          "options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict"},
-          "conditions": [{"id": "cond-success", "leftValue": "={{ $json.level_1_success }}", "rightValue": true, "operator": {"type": "boolean", "operation": "equals"}}],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-success",
+              "leftValue": "={{ $json.level_1_success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
           "combinator": "and"
         },
         "options": {}
@@ -107,49 +224,141 @@
       "name": "Action Reussie?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [1540, -100]
+      "position": [
+        2420,
+        -100
+      ]
     },
     {
       "parameters": {
-        "url": "={{ $env.N8N_WEBHOOK_BASE_URL }}/auto-repare/notify",
+        "method": "POST",
+        "url": "http://137.74.44.64:11434/api/embeddings",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={ \"type\": \"success\", \"incident\": {{ JSON.stringify($json) }} }",
+        "jsonBody": "={\n  \"model\": \"nomic-embed-text\",\n  \"prompt\": \"{{ $json.service_name || '' }} {{ $json.error_type || '' }} resolution success {{ $json.level_1_action || '' }}\"\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "embed-success",
+      "name": "Embedding Succes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2640,
+        -200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "http://137.74.44.64:6333/collections/incidents_history/points",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"points\": [{\n    \"id\": {{ Date.now() }},\n    \"vector\": {{ JSON.stringify($json.embedding) }},\n    \"payload\": {\n      \"incident_id\": \"{{ $('Webhook Execute Action').item.json.incident_id || 'N/A' }}\",\n      \"service_name\": \"{{ $('Webhook Execute Action').item.json.service_name || 'N/A' }}\",\n      \"error_type\": \"{{ $('Webhook Execute Action').item.json.error_type || 'N/A' }}\",\n      \"solution_applied\": \"{{ $('Webhook Execute Action').item.json.level_1_action || 'N/A' }}\",\n      \"resolution_level\": \"N1\",\n      \"resolution_success\": true,\n      \"resolved_at\": \"{{ $('Evaluer Resultat').item.json.resolved_at }}\"\n    }\n  }]\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "store-success",
+      "name": "Qdrant - Stocker Succes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2860,
+        -200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://n8n.aurastackai.com/webhook/auto-repare/notify",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"type\": \"success\", \"incident\": {{ JSON.stringify($('Evaluer Resultat').item.json) }} }",
         "options": {}
       },
       "id": "notify-success",
       "name": "Notifier Succes",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1760, -200]
+      "position": [
+        3080,
+        -200
+      ]
     },
     {
       "parameters": {
-        "url": "={{ $env.N8N_WEBHOOK_BASE_URL }}/auto-repare/escalate-n2",
+        "method": "POST",
+        "url": "http://137.74.44.64:11434/api/embeddings",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify($json) }}",
+        "jsonBody": "={\n  \"model\": \"nomic-embed-text\",\n  \"prompt\": \"{{ $json.service_name || '' }} {{ $json.error_type || '' }} resolution failed {{ $json.level_1_action || '' }}\"\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "embed-failure",
+      "name": "Embedding Echec",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2640,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "http://137.74.44.64:6333/collections/incidents_history/points",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"points\": [{\n    \"id\": {{ Date.now() }},\n    \"vector\": {{ JSON.stringify($json.embedding) }},\n    \"payload\": {\n      \"incident_id\": \"{{ $('Webhook Execute Action').item.json.incident_id || 'N/A' }}\",\n      \"service_name\": \"{{ $('Webhook Execute Action').item.json.service_name || 'N/A' }}\",\n      \"error_type\": \"{{ $('Webhook Execute Action').item.json.error_type || 'N/A' }}\",\n      \"solution_applied\": \"{{ $('Webhook Execute Action').item.json.level_1_action || 'N/A' }}\",\n      \"resolution_level\": \"N1\",\n      \"resolution_success\": false,\n      \"resolved_at\": null\n    }\n  }]\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "store-failure",
+      "name": "Qdrant - Stocker Echec",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2860,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://n8n.aurastackai.com/webhook/auto-repare/escalate-n2",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($('Evaluer Resultat').item.json) }}",
         "options": {}
       },
       "id": "escalate-failure",
-      "name": "Escalader - Echec N1",
+      "name": "Escalader N2",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1760, 0]
+      "position": [
+        3080,
+        0
+      ]
     },
     {
       "parameters": {
-        "url": "={{ $env.N8N_WEBHOOK_BASE_URL }}/auto-repare/escalate-n2",
+        "url": "https://n8n.aurastackai.com/webhook/auto-repare/escalate-n2",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={ \"incident_id\": \"{{ $json.incident_id }}\", \"reason\": \"Command validation failed\", \"original_incident\": {{ JSON.stringify($json) }} }",
         "options": {}
       },
       "id": "escalate-invalid",
-      "name": "Escalader - Commande Invalide",
+      "name": "Escalader - Invalide",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [660, 100]
+      "position": [
+        1540,
+        100
+      ]
     },
     {
       "parameters": {
@@ -161,18 +370,92 @@
       "name": "Webhook Escalade N2",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [0, 400],
+      "position": [
+        0,
+        400
+      ],
       "webhookId": "auto-repare-escalate"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const incident = $input.first().json;\nconst searchText = (incident.service_name || '') + ' ' + (incident.error_type || '') + ' escalation N2';\nincident._search_text_n2 = searchText.trim();\nreturn [{ json: incident }];"
+      },
+      "id": "prepare-rag-n2",
+      "name": "Preparer RAG N2",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://137.74.44.64:11434/api/embeddings",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"nomic-embed-text\",\n  \"prompt\": \"{{ $json._search_text_n2 }}\"\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "embed-n2",
+      "name": "Embedding N2",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://137.74.44.64:6333/collections/incidents_history/points/search",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"vector\": {{ JSON.stringify($json.embedding) }},\n  \"limit\": 5,\n  \"with_payload\": true,\n  \"score_threshold\": 0.6\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "qdrant-n2",
+      "name": "Qdrant - Historique N2",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const incident = $('Webhook Escalade N2').first().json;\nconst ragResults = $input.first().json;\nlet historyContext = '';\nif (ragResults.result && ragResults.result.length > 0) {\n  historyContext = '\\n\\nHISTORIQUE INCIDENTS SIMILAIRES:\\n';\n  ragResults.result.forEach((r, i) => {\n    historyContext += (i+1) + '. Service: ' + (r.payload?.service_name || 'N/A') + '\\n';\n    historyContext += '   Solution: ' + (r.payload?.solution_applied || 'N/A') + '\\n';\n    historyContext += '   Resultat: ' + (r.payload?.resolution_success ? 'SUCCES' : 'ECHEC') + '\\n';\n  });\n}\nincident._rag_context = historyContext;\nreturn [{ json: incident }];"
+      },
+      "id": "build-context-n2",
+      "name": "Contexte RAG N2",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        400
+      ]
     },
     {
       "parameters": {
         "command": "=tail -n 100 /var/log/syslog 2>/dev/null; echo '---DOCKER---'; docker logs --tail 50 {{ $json.service_name || 'n8n-main-prod' }} 2>&1 || true; echo '---RESOURCES---'; free -h; df -h /"
       },
-      "id": "ssh-collect-context",
-      "name": "SSH - Collecter Contexte",
+      "id": "ssh-collect",
+      "name": "SSH - Collecter Logs",
       "type": "n8n-nodes-base.ssh",
       "typeVersion": 1,
-      "position": [220, 400],
+      "position": [
+        1100,
+        400
+      ],
       "credentials": {
         "sshPrivateKey": {
           "id": "YOUR_SSH_CREDENTIAL_ID",
@@ -189,20 +472,31 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            {"name": "anthropic-version", "value": "2023-06-01"},
-            {"name": "content-type", "value": "application/json"}
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"model\": \"claude-3-5-sonnet-20241022\",\n  \"max_tokens\": 2000,\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"Tu es un expert DevOps Niveau 2. Analyse cet incident.\\n\\nIncident: {{ $('Webhook Escalade N2').item.json.incident_id }}\\nService: {{ $('Webhook Escalade N2').item.json.service_name }}\\n\\nContexte:\\n{{ $json.stdout }}\\n\\nReponds avec JSON: {\\\"root_cause\\\": \\\"...\\\", \\\"analysis\\\": \\\"...\\\", \\\"severity\\\": \\\"critical|high|medium|low\\\", \\\"action_command\\\": \\\"...\\\", \\\"action_explanation\\\": \\\"...\\\", \\\"requires_human_approval\\\": true, \\\"risks\\\": [\\\"...\\\"]}\"\n  }]\n}",
-        "options": {"timeout": 120000}
+        "jsonBody": "={\n  \"model\": \"claude-sonnet-4-20250514\",\n  \"max_tokens\": 2000,\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"Expert DevOps N2. Analyse incident.\\n\\nService: {{ $('Webhook Escalade N2').item.json.service_name }}{{ $('Contexte RAG N2').item.json._rag_context }}\\n\\nLogs:\\n{{ $json.stdout }}\\n\\nJSON: {\\\"root_cause\\\": \\\"...\\\", \\\"analysis\\\": \\\"...\\\", \\\"severity\\\": \\\"critical|high|medium|low\\\", \\\"action_command\\\": \\\"...\\\", \\\"action_explanation\\\": \\\"...\\\", \\\"requires_human_approval\\\": true, \\\"risks\\\": [\\\"...\\\"]}\"\n  }]\n}",
+        "options": {
+          "timeout": 120000
+        }
       },
       "id": "claude-n2",
-      "name": "Claude - Expert N2",
+      "name": "Claude N2",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [440, 400],
+      "position": [
+        1320,
+        400
+      ],
       "credentials": {
         "httpHeaderAuth": {
           "id": "YOUR_ANTHROPIC_CREDENTIAL_ID",
@@ -213,42 +507,378 @@
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const incident = $('Webhook Escalade N2').first().json;\nconst claudeResponse = $input.first().json;\ntry {\n  const content = claudeResponse.content?.[0]?.text || '';\n  const jsonMatch = content.match(/\\{[\\s\\S]*?\\\"root_cause\\\"[\\s\\S]*?\\}/m);\n  if (jsonMatch) {\n    incident.level_2_recommendation = JSON.parse(jsonMatch[0]);\n  } else { throw new Error('No JSON'); }\n} catch (e) {\n  incident.level_2_recommendation = { root_cause: 'Parse error', analysis: 'Manual review', severity: 'high', requires_human_approval: true, error: e.message };\n}\nreturn [{ json: incident }];"
+        "jsCode": "const incident = $('Contexte RAG N2').first().json;\nconst claudeResponse = $input.first().json;\ntry {\n  const content = claudeResponse.content?.[0]?.text || '';\n  const jsonMatch = content.match(/\\{[\\s\\S]*?\\\"root_cause\\\"[\\s\\S]*?\\}/m);\n  if (jsonMatch) {\n    incident.level_2_recommendation = JSON.parse(jsonMatch[0]);\n  } else { throw new Error('No JSON'); }\n} catch (e) {\n  incident.level_2_recommendation = { root_cause: 'Parse error', analysis: 'Manual review', severity: 'high', requires_human_approval: true };\n}\nreturn [{ json: incident }];"
       },
       "id": "parse-claude",
-      "name": "Parser Reponse Claude",
+      "name": "Parser Claude",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [660, 400]
+      "position": [
+        1540,
+        400
+      ]
     },
     {
       "parameters": {
-        "url": "={{ $env.N8N_WEBHOOK_BASE_URL }}/auto-repare/notify",
+        "method": "POST",
+        "url": "http://137.74.44.64:11434/api/embeddings",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={ \"type\": \"escalation\", \"incident\": {{ JSON.stringify($json) }} }",
+        "jsonBody": "={\n  \"model\": \"nomic-embed-text\",\n  \"prompt\": \"{{ $json.service_name || '' }} N2 analysis {{ $json.level_2_recommendation?.root_cause || '' }}\"\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "embed-n2-result",
+      "name": "Embedding Analyse N2",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1760,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "http://137.74.44.64:6333/collections/incidents_history/points",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"points\": [{\n    \"id\": {{ Date.now() }},\n    \"vector\": {{ JSON.stringify($json.embedding) }},\n    \"payload\": {\n      \"incident_id\": \"{{ $('Webhook Escalade N2').item.json.incident_id || 'N/A' }}\",\n      \"service_name\": \"{{ $('Webhook Escalade N2').item.json.service_name || 'N/A' }}\",\n      \"solution_applied\": \"{{ $('Parser Claude').item.json.level_2_recommendation?.action_command || 'N/A' }}\",\n      \"root_cause\": \"{{ $('Parser Claude').item.json.level_2_recommendation?.root_cause || 'N/A' }}\",\n      \"resolution_level\": \"N2\",\n      \"resolution_success\": null,\n      \"awaiting_human\": true\n    }\n  }]\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "store-n2",
+      "name": "Qdrant - Stocker N2",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1980,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://n8n.aurastackai.com/webhook/auto-repare/notify",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"type\": \"escalation\", \"incident\": {{ JSON.stringify($('Parser Claude').item.json) }} }",
         "options": {}
       },
       "id": "notify-escalation",
-      "name": "Demander Validation Humaine",
+      "name": "Demander Validation",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [880, 400]
+      "position": [
+        2200,
+        400
+      ]
     }
   ],
   "connections": {
-    "Webhook Execute Action": {"main": [[{"node": "Valider Commande", "type": "main", "index": 0}]]},
-    "Valider Commande": {"main": [[{"node": "Commande Valide?", "type": "main", "index": 0}]]},
-    "Commande Valide?": {"main": [[{"node": "SSH - Executer Action", "type": "main", "index": 0}], [{"node": "Escalader - Commande Invalide", "type": "main", "index": 0}]]},
-    "SSH - Executer Action": {"main": [[{"node": "Attendre 30s", "type": "main", "index": 0}]]},
-    "Attendre 30s": {"main": [[{"node": "SSH - Verifier Service", "type": "main", "index": 0}]]},
-    "SSH - Verifier Service": {"main": [[{"node": "Evaluer Resultat", "type": "main", "index": 0}]]},
-    "Evaluer Resultat": {"main": [[{"node": "Action Reussie?", "type": "main", "index": 0}]]},
-    "Action Reussie?": {"main": [[{"node": "Notifier Succes", "type": "main", "index": 0}], [{"node": "Escalader - Echec N1", "type": "main", "index": 0}]]},
-    "Webhook Escalade N2": {"main": [[{"node": "SSH - Collecter Contexte", "type": "main", "index": 0}]]},
-    "SSH - Collecter Contexte": {"main": [[{"node": "Claude - Expert N2", "type": "main", "index": 0}]]},
-    "Claude - Expert N2": {"main": [[{"node": "Parser Reponse Claude", "type": "main", "index": 0}]]},
-    "Parser Reponse Claude": {"main": [[{"node": "Demander Validation Humaine", "type": "main", "index": 0}]]}
+    "Webhook Execute Action": {
+      "main": [
+        [
+          {
+            "node": "Preparer Query RAG",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparer Query RAG": {
+      "main": [
+        [
+          {
+            "node": "Ollama - Embedding",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama - Embedding": {
+      "main": [
+        [
+          {
+            "node": "Qdrant - Chercher Similaires",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qdrant - Chercher Similaires": {
+      "main": [
+        [
+          {
+            "node": "Enrichir avec RAG",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enrichir avec RAG": {
+      "main": [
+        [
+          {
+            "node": "Valider Commande",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valider Commande": {
+      "main": [
+        [
+          {
+            "node": "Commande Valide?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Commande Valide?": {
+      "main": [
+        [
+          {
+            "node": "SSH - Executer Action",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Escalader - Invalide",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SSH - Executer Action": {
+      "main": [
+        [
+          {
+            "node": "Attendre 30s",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attendre 30s": {
+      "main": [
+        [
+          {
+            "node": "SSH - Verifier Service",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SSH - Verifier Service": {
+      "main": [
+        [
+          {
+            "node": "Evaluer Resultat",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluer Resultat": {
+      "main": [
+        [
+          {
+            "node": "Action Reussie?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Action Reussie?": {
+      "main": [
+        [
+          {
+            "node": "Embedding Succes",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Embedding Echec",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embedding Succes": {
+      "main": [
+        [
+          {
+            "node": "Qdrant - Stocker Succes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qdrant - Stocker Succes": {
+      "main": [
+        [
+          {
+            "node": "Notifier Succes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embedding Echec": {
+      "main": [
+        [
+          {
+            "node": "Qdrant - Stocker Echec",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qdrant - Stocker Echec": {
+      "main": [
+        [
+          {
+            "node": "Escalader N2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook Escalade N2": {
+      "main": [
+        [
+          {
+            "node": "Preparer RAG N2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparer RAG N2": {
+      "main": [
+        [
+          {
+            "node": "Embedding N2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embedding N2": {
+      "main": [
+        [
+          {
+            "node": "Qdrant - Historique N2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qdrant - Historique N2": {
+      "main": [
+        [
+          {
+            "node": "Contexte RAG N2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Contexte RAG N2": {
+      "main": [
+        [
+          {
+            "node": "SSH - Collecter Logs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SSH - Collecter Logs": {
+      "main": [
+        [
+          {
+            "node": "Claude N2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude N2": {
+      "main": [
+        [
+          {
+            "node": "Parser Claude",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parser Claude": {
+      "main": [
+        [
+          {
+            "node": "Embedding Analyse N2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embedding Analyse N2": {
+      "main": [
+        [
+          {
+            "node": "Qdrant - Stocker N2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qdrant - Stocker N2": {
+      "main": [
+        [
+          {
+            "node": "Demander Validation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
   },
-  "settings": {"executionOrder": "v1"}
+  "settings": {
+    "executionOrder": "v1"
+  }
 }
