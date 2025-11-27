@@ -1,0 +1,106 @@
+{
+  "uptime_kuma": {
+    "url": "http://137.74.44.64:3001",
+    "webhook_endpoint": "https://n8n.aurastackai.com/webhook/auto-repare/alert"
+  },
+  "monitors": [
+    {
+      "name": "N8N Main",
+      "type": "http",
+      "url": "https://n8n.aurastackai.com",
+      "interval": 60,
+      "retry_interval": 30,
+      "max_retries": 3,
+      "description": "Interface principale N8N",
+      "tags": ["n8n", "web", "critical"]
+    },
+    {
+      "name": "N8N Webhook Health",
+      "type": "http",
+      "url": "https://n8n.aurastackai.com/webhook-test",
+      "interval": 120,
+      "retry_interval": 60,
+      "max_retries": 2,
+      "description": "Vérification webhooks N8N",
+      "tags": ["n8n", "webhook"]
+    },
+    {
+      "name": "VPS SSH",
+      "type": "port",
+      "hostname": "137.74.44.64",
+      "port": 22,
+      "interval": 60,
+      "retry_interval": 30,
+      "max_retries": 3,
+      "description": "Port SSH du VPS",
+      "tags": ["vps", "ssh", "critical"]
+    },
+    {
+      "name": "VPS HTTP (Uptime Kuma)",
+      "type": "http",
+      "url": "http://137.74.44.64:3001",
+      "interval": 60,
+      "retry_interval": 30,
+      "max_retries": 3,
+      "description": "Uptime Kuma lui-même",
+      "tags": ["monitoring", "uptime-kuma"]
+    },
+    {
+      "name": "Docker N8N Main",
+      "type": "docker",
+      "container": "n8n-main-prod",
+      "interval": 30,
+      "description": "Container N8N principal",
+      "tags": ["docker", "n8n", "critical"]
+    },
+    {
+      "name": "Docker N8N Worker 1",
+      "type": "docker",
+      "container": "n8n-worker-prod-1",
+      "interval": 30,
+      "description": "Worker N8N 1",
+      "tags": ["docker", "n8n", "worker"]
+    },
+    {
+      "name": "Docker N8N Worker 2",
+      "type": "docker",
+      "container": "n8n-worker-prod-2",
+      "interval": 30,
+      "description": "Worker N8N 2",
+      "tags": ["docker", "n8n", "worker"]
+    },
+    {
+      "name": "Docker Redis",
+      "type": "docker",
+      "container": "n8n-redis-prod",
+      "interval": 30,
+      "description": "Redis pour N8N",
+      "tags": ["docker", "redis", "critical"]
+    },
+    {
+      "name": "Docker PostgreSQL",
+      "type": "docker",
+      "container": "n8n-postgres-prod",
+      "interval": 30,
+      "description": "Base de données N8N",
+      "tags": ["docker", "postgres", "critical"]
+    },
+    {
+      "name": "Ollama API",
+      "type": "http",
+      "url": "http://localhost:11434/api/tags",
+      "interval": 60,
+      "retry_interval": 30,
+      "max_retries": 2,
+      "description": "API Ollama pour Qwen",
+      "tags": ["ai", "ollama", "qwen"]
+    }
+  ],
+  "notification": {
+    "name": "Auto-Repare Webhook",
+    "type": "webhook",
+    "content_type": "application/json",
+    "is_default": true,
+    "apply_existing": true
+  }
+}
